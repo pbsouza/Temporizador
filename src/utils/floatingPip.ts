@@ -3,16 +3,12 @@ import { formatTimeString } from './timeFormat';
 /**
  * High-reliability Background & Picture-in-Picture Service for Stopwatch
  * 
- * Key challenges solved:
- * 1. Android / Chrome throttling when app is in background:
- *    - `requestAnimationFrame` pauses when tab is backgrounded.
- *    - Web Workers with `setInterval` run continuously without being throttled by the display engine.
- *    - Continuous silent audio playback prevents OS audio/media session from going to deep sleep.
- * 2. Canvas Video Stream updates:
- *    - Calling `videoTrack.requestFrame()` forces the PiP video window to render the latest canvas frame
- *      even when the main document is hidden / in background.
- * 3. MediaSession API:
- *    - Registers native Android / OS media notification with live playback position and actions (play, pause, next/lap).
+ * PiP Design:
+ * - Ultra-sleek floating glass capsule (pill) matching the browser pill design
+ * - Full interactive controls: Native OS PiP Play/Pause + Document PiP Buttons + MediaSession controls
+ * - Transparent / backdrop glass aesthetic with glowing border, live pulse badge, and responsive time font
+ * - Supports Document PiP (HTML/DOM floating window on Desktop Chrome 116+)
+ * - Supports Video Canvas PiP (Universal floating window on Android Chrome / Desktop)
  */
 class FloatingPiPService {
   private canvas: HTMLCanvasElement | null = null;
@@ -21,6 +17,7 @@ class FloatingPiPService {
   private isPiPActive = false;
   private worker: Worker | null = null;
   private bgIntervalId: any = null;
+  private isSyncingVideo = false;
 
   private getTimeFn: () => number = () => 0;
   private getIsRunningFn: () => boolean = () => false;
@@ -75,12 +72,10 @@ class FloatingPiPService {
     if (typeof document === 'undefined') return;
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        // Tab minimized or switched app
         if (this.isPiPActive || this.getIsRunningFn()) {
           this.startBackgroundHeartbeat();
         }
       } else {
-        // Tab restored
         if (!this.isPiPActive && !this.getIsRunningFn()) {
           this.stopBackgroundHeartbeat();
         }
@@ -145,10 +140,9 @@ class FloatingPiPService {
   }
 
   private onWorkerTick() {
-    // 1. If PiP is active, force render frame
+    // If PiP is active, force render frame
     if (this.isPiPActive) {
       this.renderCanvasFrame();
-      // On browsers supporting canvas stream tracks, notify track of update
       if (this.video && this.video.srcObject) {
         const stream = this.video.srcObject as MediaStream;
         const track = stream.getVideoTracks()[0] as any;
@@ -160,7 +154,7 @@ class FloatingPiPService {
       }
     }
 
-    // 2. Update MediaSession notification metadata if available
+    // Update MediaSession notification metadata
     this.updateMediaSession();
   }
 
@@ -187,6 +181,7 @@ class FloatingPiPService {
     if (onStateChange) {
       this.onStateChangeCallback = onStateChange;
     }
+    this.setupMediaSessionHandlers();
   }
 
   public getIsActive(): boolean {
@@ -194,7 +189,7 @@ class FloatingPiPService {
   }
 
   /**
-   * Request Picture-in-Picture mode with high-contrast live floating pill canvas
+   * Request Picture-in-Picture mode with high-contrast floating pill design
    */
   public async enterPiP(): Promise<boolean> {
     try {
@@ -202,8 +197,8 @@ class FloatingPiPService {
       if ('documentPictureInPicture' in window) {
         try {
           const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
-            width: 320,
-            height: 120,
+            width: 340,
+            height: 90,
           });
 
           this.setupDocumentPiP(pipWindow);
@@ -234,89 +229,165 @@ class FloatingPiPService {
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         body {
-          background: #090d16;
+          background: rgba(8, 12, 22, 0.95);
           color: #fff;
           display: flex;
           align-items: center;
           justify-content: center;
           height: 100vh;
           overflow: hidden;
-          padding: 12px;
+          padding: 8px;
           user-select: none;
         }
-        .pill {
-          background: #111827;
-          border: 2px solid #6366f1;
+        .pill-capsule {
+          background: rgba(30, 27, 75, 0.85);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1.5px solid rgba(99, 102, 241, 0.6);
           border-radius: 9999px;
-          padding: 10px 18px;
+          padding: 6px 14px 6px 16px;
           display: flex;
           align-items: center;
-          gap: 14px;
-          box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.4);
-          width: 100%;
           justify-content: space-between;
+          gap: 12px;
+          width: 100%;
+          height: 100%;
+          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 20px rgba(99, 102, 241, 0.25);
+          cursor: pointer;
         }
-        .time-box {
+        .pill-info {
           display: flex;
           flex-direction: column;
+          gap: 1px;
         }
-        .live-tag {
-          font-size: 11px;
-          font-weight: 700;
-          color: #34d399;
+        .pill-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .badge-tag {
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          padding: 1px 6px;
+          border-radius: 4px;
+          background: rgba(99, 102, 241, 0.3);
+          color: #c7d2fe;
+        }
+        .live-indicator {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 9px;
+          font-weight: 800;
           letter-spacing: 0.05em;
+          color: #34d399;
           text-transform: uppercase;
         }
+        .live-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #34d399;
+          box-shadow: 0 0 8px #34d399;
+          animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.85); }
+        }
         .time-display {
-          font-family: monospace;
-          font-size: 22px;
+          font-family: "SF Mono", "Roboto Mono", Consolas, monospace;
+          font-size: 20px;
           font-weight: 800;
           color: #ffffff;
           letter-spacing: -0.5px;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.5);
         }
         .btn-group {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
         }
-        button {
-          background: #1e1b4b;
-          border: 1px solid #4f46e5;
-          color: #fff;
+        .btn-ctrl {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 4px;
           border-radius: 9999px;
           padding: 6px 14px;
-          font-size: 13px;
-          font-weight: 600;
+          font-size: 12px;
+          font-weight: 700;
           cursor: pointer;
-          transition: background 0.2s;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          transition: all 0.15s ease;
+          outline: none;
         }
-        button:hover { background: #312e81; }
-        button.primary { background: #6366f1; border-color: #818cf8; }
-        button.primary:hover { background: #4f46e5; }
+        .btn-ctrl:active {
+          transform: scale(0.95);
+        }
+        .btn-play-pause {
+          background: #4f46e5;
+          color: #ffffff;
+          border-color: #818cf8;
+          box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+        }
+        .btn-play-pause.running {
+          background: #d97706;
+          border-color: #fbbf24;
+          box-shadow: 0 4px 12px rgba(217, 119, 6, 0.4);
+        }
+        .btn-lap {
+          background: rgba(30, 41, 59, 0.8);
+          color: #cbd5e1;
+          border-color: rgba(71, 85, 105, 0.8);
+        }
+        .btn-lap:hover {
+          background: rgba(51, 65, 85, 0.9);
+          color: #fff;
+        }
       </style>
-      <div class="pill">
-        <div class="time-box">
-          <span class="live-tag" id="pip-live-status">● AO VIVO</span>
-          <span class="time-display" id="pip-time-txt">00:00.00</span>
+      <div class="pill-capsule" id="pip-capsule-container">
+        <div class="pill-info">
+          <div class="pill-header">
+            <span class="badge-tag">CRONÔMETRO</span>
+            <span class="live-indicator" id="pip-live-status">
+              <span class="live-dot" id="pip-live-dot"></span>
+              <span id="pip-live-txt">AO VIVO</span>
+            </span>
+          </div>
+          <div class="time-display" id="pip-time-txt">00:00.00</div>
         </div>
         <div class="btn-group">
-          <button id="pip-toggle-btn" class="primary">Pausar</button>
-          <button id="pip-lap-btn">Volta</button>
+          <button id="pip-toggle-btn" class="btn-ctrl btn-play-pause">Pausar</button>
+          <button id="pip-lap-btn" class="btn-ctrl btn-lap">Volta</button>
         </div>
       </div>
     `;
 
+    const capsuleContainer = doc.getElementById('pip-capsule-container');
     const timeTxt = doc.getElementById('pip-time-txt');
     const toggleBtn = doc.getElementById('pip-toggle-btn');
     const lapBtn = doc.getElementById('pip-lap-btn');
-    const statusTxt = doc.getElementById('pip-live-status');
+    const statusTxt = doc.getElementById('pip-live-txt');
+    const dot = doc.getElementById('pip-live-dot');
 
-    toggleBtn?.addEventListener('click', () => {
+    toggleBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
       this.onToggleFn();
     });
 
-    lapBtn?.addEventListener('click', () => {
+    lapBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
       this.onLapFn();
+    });
+
+    // Clicking the capsule body also triggers toggle
+    capsuleContainer?.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement)?.tagName !== 'BUTTON') {
+        this.onToggleFn();
+      }
     });
 
     const updateDocPiP = () => {
@@ -324,14 +395,23 @@ class FloatingPiPService {
       const ms = this.getTimeFn();
       const running = this.getIsRunningFn();
       if (timeTxt) timeTxt.innerText = formatTimeString(ms, true);
-      if (toggleBtn) toggleBtn.innerText = running ? 'Pausar' : 'Iniciar';
-      if (statusTxt) {
-        statusTxt.innerText = running ? '● AO VIVO' : '❚❚ PAUSADO';
+      if (toggleBtn) {
+        toggleBtn.innerText = running ? 'Pausar' : 'Iniciar';
+        if (running) {
+          toggleBtn.className = 'btn-ctrl btn-play-pause running';
+        } else {
+          toggleBtn.className = 'btn-ctrl btn-play-pause';
+        }
+      }
+      if (statusTxt && dot) {
+        statusTxt.innerText = running ? 'AO VIVO' : 'PAUSADO';
         statusTxt.style.color = running ? '#34d399' : '#f59e0b';
+        dot.style.background = running ? '#34d399' : '#f59e0b';
+        dot.style.boxShadow = running ? '0 0 8px #34d399' : 'none';
+        dot.style.animation = running ? 'pulse 1.5s infinite' : 'none';
       }
     };
 
-    // Use interval in pipWindow to guarantee updates even if parent throttles
     const interval = pipWindow.setInterval(updateDocPiP, 33);
 
     pipWindow.addEventListener('pagehide', () => {
@@ -343,11 +423,11 @@ class FloatingPiPService {
   }
 
   private async setupVideoCanvasPiP(): Promise<boolean> {
-    // 1. Create or get offscreen Canvas
+    // 1. Create or get offscreen Canvas with high-DPI aspect ratio
     if (!this.canvas) {
       this.canvas = document.createElement('canvas');
       this.canvas.width = 480;
-      this.canvas.height = 180;
+      this.canvas.height = 140;
       this.ctx = this.canvas.getContext('2d');
     }
 
@@ -363,6 +443,21 @@ class FloatingPiPService {
       this.video.style.opacity = '0';
       this.video.style.pointerEvents = 'none';
       document.body.appendChild(this.video);
+
+      // Handle OS PiP Window Play / Pause native controls
+      this.video.addEventListener('play', () => {
+        if (this.isSyncingVideo) return;
+        if (!this.getIsRunningFn()) {
+          this.onToggleFn();
+        }
+      });
+
+      this.video.addEventListener('pause', () => {
+        if (this.isSyncingVideo) return;
+        if (this.getIsRunningFn()) {
+          this.onToggleFn();
+        }
+      });
 
       this.video.addEventListener('leavepictureinpicture', () => {
         this.isPiPActive = false;
@@ -381,7 +476,12 @@ class FloatingPiPService {
     }
 
     this.video.srcObject = stream;
-    await this.video.play();
+    this.isSyncingVideo = true;
+    try {
+      await this.video.play();
+    } finally {
+      this.isSyncingVideo = false;
+    }
 
     // Request Picture in Picture
     await this.video.requestPictureInPicture();
@@ -391,6 +491,10 @@ class FloatingPiPService {
     return true;
   }
 
+  /**
+   * Renders the floating pill canvas with modern glassmorphism aesthetic,
+   * translucent pill capsule, crisp glowing border, tag badge and live status indicator.
+   */
   private renderCanvasFrame() {
     if (!this.ctx || !this.canvas) return;
     const ctx = this.ctx;
@@ -400,50 +504,152 @@ class FloatingPiPService {
     const isRunning = this.getIsRunningFn();
     const timeFormatted = formatTimeString(ms, true);
 
-    // Background Canvas
-    ctx.fillStyle = '#090d16';
+    // 1. Dark Clean Canvas Background
+    ctx.fillStyle = '#070b14';
     ctx.fillRect(0, 0, width, height);
 
-    // Floating Pill Card
-    const pillX = 16;
-    const pillY = 16;
-    const pillW = width - 32;
-    const pillH = height - 32;
-    const radius = 32;
+    // 2. Floating Capsule Outer Geometry
+    const margin = 10;
+    const pillX = margin;
+    const pillY = margin;
+    const pillW = width - margin * 2;
+    const pillH = height - margin * 2;
+    const radius = pillH / 2; // Perfect full pill capsule
 
-    // Outer Pill Background & Border
+    // 3. Ambient Glow underneath pill
     ctx.save();
+    ctx.shadowColor = isRunning ? 'rgba(99, 102, 241, 0.45)' : 'rgba(30, 41, 59, 0.3)';
+    ctx.shadowBlur = 18;
     ctx.beginPath();
     ctx.roundRect(pillX, pillY, pillW, pillH, radius);
-    ctx.fillStyle = '#111827';
+    ctx.fillStyle = isRunning ? '#181438' : '#0f172a';
     ctx.fill();
-    ctx.lineWidth = 4;
+    ctx.restore();
+
+    // 4. Glass Capsule Gradient & Fill
+    ctx.save();
+    const grad = ctx.createLinearGradient(pillX, pillY, pillX + pillW, pillY + pillH);
+    if (isRunning) {
+      grad.addColorStop(0, 'rgba(30, 27, 75, 0.95)');
+      grad.addColorStop(1, 'rgba(49, 46, 129, 0.85)');
+    } else {
+      grad.addColorStop(0, 'rgba(15, 23, 42, 0.95)');
+      grad.addColorStop(1, 'rgba(30, 41, 59, 0.85)');
+    }
+    ctx.beginPath();
+    ctx.roundRect(pillX, pillY, pillW, pillH, radius);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Capsule Border with glowing highlight
+    ctx.lineWidth = 3;
     ctx.strokeStyle = isRunning ? '#6366f1' : '#475569';
     ctx.stroke();
     ctx.restore();
 
-    // Status Indicator Dot & Text
+    // 5. Left Section: Tag Badge & Live Pulse Dot
+    const leftContentX = pillX + 28;
+
+    // Tag badge background
     ctx.save();
-    const dotX = pillX + 32;
-    const dotY = pillY + 32;
+    ctx.fillStyle = isRunning ? 'rgba(99, 102, 241, 0.35)' : 'rgba(71, 85, 105, 0.35)';
     ctx.beginPath();
-    ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
-    ctx.fillStyle = isRunning ? '#10b981' : '#f59e0b';
+    ctx.roundRect(leftContentX, pillY + 22, 92, 22, 6);
     ctx.fill();
 
-    ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillStyle = isRunning ? '#34d399' : '#fbbf24';
-    ctx.fillText(isRunning ? 'CRONÔMETRO ATIVO' : 'CRONÔMETRO PAUSADO', dotX + 14, dotY + 5);
+    // Tag text
+    ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.fillStyle = isRunning ? '#c7d2fe' : '#94a3b8';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('CRONÔMETRO', leftContentX + 46, pillY + 33);
     ctx.restore();
 
-    // Big Stopwatch Time Display (Crisp and legible)
+    // Live Pulse Dot & Text
     ctx.save();
-    ctx.font = 'bold 56px "SF Mono", Menlo, Consolas, monospace';
+    const dotX = leftContentX + 104;
+    const dotY = pillY + 33;
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = isRunning ? '#34d399' : '#f59e0b';
+    ctx.fill();
+
+    if (isRunning) {
+      ctx.shadowColor = '#34d399';
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.fillStyle = isRunning ? '#34d399' : '#fbbf24';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(isRunning ? 'AO VIVO' : 'PAUSADO', dotX + 8, dotY);
+    ctx.restore();
+
+    // 6. Main Live Time Display (Large, clean monospace typography)
+    ctx.save();
+    ctx.font = 'bold 44px "SF Mono", "Roboto Mono", Menlo, Consolas, monospace';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+    ctx.shadowBlur = 6;
+    ctx.fillText(timeFormatted, leftContentX, pillY + 76);
+    ctx.restore();
+
+    // 7. Right Section: Action Controls Badges (Visual indicator in canvas PiP)
+    const rightX = pillX + pillW - 28;
+    const btnH = 36;
+    const btnW = 86;
+    const btnY = pillY + (pillH - btnH) / 2;
+
+    ctx.save();
+    // Play/Pause Action Capsule
+    ctx.beginPath();
+    ctx.roundRect(rightX - btnW, btnY, btnW, btnH, 18);
+    ctx.fillStyle = isRunning ? '#d97706' : '#4f46e5';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = isRunning ? '#fbbf24' : '#818cf8';
+    ctx.stroke();
+
+    ctx.font = 'bold 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(timeFormatted, width / 2, pillY + pillH / 2 + 18);
+    ctx.fillText(isRunning ? '❚❚ Pausar' : '▶ Iniciar', rightX - btnW / 2, btnY + btnH / 2);
     ctx.restore();
+  }
+
+  private setupMediaSessionHandlers() {
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.setActionHandler('play', () => {
+          if (!this.getIsRunningFn()) {
+            this.onToggleFn();
+          }
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          if (this.getIsRunningFn()) {
+            this.onToggleFn();
+          }
+        });
+        navigator.mediaSession.setActionHandler('stop', () => {
+          if (this.getIsRunningFn()) {
+            this.onToggleFn();
+          }
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          this.onLapFn();
+        });
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          this.onToggleFn();
+        });
+      } catch (e) {}
+    }
   }
 
   private updateMediaSession() {
@@ -455,7 +661,7 @@ class FloatingPiPService {
 
         navigator.mediaSession.metadata = new MediaMetadata({
           title: `⏱️ ${timeFormatted}`,
-          artist: isRunning ? 'Cronômetro em Execução' : 'Cronômetro Pausado',
+          artist: isRunning ? 'Cronômetro Rodando' : 'Cronômetro Pausado',
           album: 'Cronômetro Pro PWA',
           artwork: [
             { src: './icon-192.png', sizes: '192x192', type: 'image/png' },
@@ -464,16 +670,6 @@ class FloatingPiPService {
         });
 
         navigator.mediaSession.playbackState = isRunning ? 'playing' : 'paused';
-
-        navigator.mediaSession.setActionHandler('play', () => {
-          if (!this.getIsRunningFn()) this.onToggleFn();
-        });
-        navigator.mediaSession.setActionHandler('pause', () => {
-          if (this.getIsRunningFn()) this.onToggleFn();
-        });
-        navigator.mediaSession.setActionHandler('nexttrack', () => {
-          this.onLapFn();
-        });
       } catch (e) {}
     }
   }
@@ -484,6 +680,26 @@ class FloatingPiPService {
     } else if (!this.isPiPActive) {
       this.stopBackgroundHeartbeat();
     }
+
+    // Sync video element playback state with timer state
+    if (this.video && this.isPiPActive) {
+      this.isSyncingVideo = true;
+      if (isRunning) {
+        if (this.video.paused) {
+          this.video.play().catch(() => {}).finally(() => {
+            this.isSyncingVideo = false;
+          });
+        } else {
+          this.isSyncingVideo = false;
+        }
+      } else {
+        if (!this.video.paused) {
+          this.video.pause();
+        }
+        this.isSyncingVideo = false;
+      }
+    }
+
     this.updateMediaSession();
   }
 

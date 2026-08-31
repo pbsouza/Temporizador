@@ -198,28 +198,37 @@ export default function App() {
     }
   }, [isPiPActive, isRunning, handleStart]);
 
+  const isRunningRef = useRef(isRunning);
+  isRunningRef.current = isRunning;
+  const handleStartRef = useRef(handleStart);
+  handleStartRef.current = handleStart;
+  const handlePauseRef = useRef(handlePause);
+  handlePauseRef.current = handlePause;
+  const handleLapRef = useRef(handleLap);
+  handleLapRef.current = handleLap;
+
   // Link PiP service callbacks with latest state
   useEffect(() => {
     floatingPiP.setCallbacks(
       () => {
-        return accumulatedTimeRef.current + (isRunning ? performance.now() - startTimeRef.current : 0);
+        return accumulatedTimeRef.current + (isRunningRef.current ? performance.now() - startTimeRef.current : 0);
       },
-      () => isRunning,
+      () => isRunningRef.current,
       () => {
-        if (isRunning) {
-          handlePause();
+        if (isRunningRef.current) {
+          handlePauseRef.current();
         } else {
-          handleStart();
+          handleStartRef.current();
         }
       },
       () => {
-        handleLap();
+        handleLapRef.current();
       },
       (active) => {
         setIsPiPActive(active);
       }
     );
-  }, [isRunning, handleStart, handlePause, handleLap]);
+  }, []);
 
   // Add pill directly from a lap entry
   const handleAddPillFromLap = useCallback((lap: Lap) => {
