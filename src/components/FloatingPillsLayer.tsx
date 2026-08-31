@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Copy, Check, Pin, GripVertical, Play, Pause, Flag, Sparkles, Edit2 } from 'lucide-react';
+import { X, Copy, Check, GripVertical, Play, Pause, Flag, Edit2, PictureInPicture, ExternalLink } from 'lucide-react';
 import { FloatingPill } from '../types';
 import { formatTimeString } from '../utils/timeFormat';
 
@@ -12,56 +12,58 @@ interface FloatingPillsLayerProps {
   isStopwatchRunning: boolean;
   onTogglePlayPause: () => void;
   onLap: () => void;
+  onTriggerSystemPiP?: () => void;
+  isPiPActive?: boolean;
 }
 
 const colorMap = {
   indigo: {
-    bg: 'bg-indigo-950/90 hover:bg-indigo-900/90',
-    border: 'border-indigo-500/50',
+    bg: 'bg-indigo-950/95 hover:bg-indigo-900/95',
+    border: 'border-indigo-500/60',
     text: 'text-indigo-200',
     time: 'text-white',
-    badge: 'bg-indigo-500/20 text-indigo-300',
-    glow: 'shadow-indigo-500/20',
+    badge: 'bg-indigo-500/30 text-indigo-300',
+    glow: 'shadow-indigo-500/25',
   },
   emerald: {
-    bg: 'bg-emerald-950/90 hover:bg-emerald-900/90',
-    border: 'border-emerald-500/50',
+    bg: 'bg-emerald-950/95 hover:bg-emerald-900/95',
+    border: 'border-emerald-500/60',
     text: 'text-emerald-200',
     time: 'text-white',
-    badge: 'bg-emerald-500/20 text-emerald-300',
-    glow: 'shadow-emerald-500/20',
+    badge: 'bg-emerald-500/30 text-emerald-300',
+    glow: 'shadow-emerald-500/25',
   },
   amber: {
-    bg: 'bg-amber-950/90 hover:bg-amber-900/90',
-    border: 'border-amber-500/50',
+    bg: 'bg-amber-950/95 hover:bg-amber-900/95',
+    border: 'border-amber-500/60',
     text: 'text-amber-200',
     time: 'text-white',
-    badge: 'bg-amber-500/20 text-amber-300',
-    glow: 'shadow-amber-500/20',
+    badge: 'bg-amber-500/30 text-amber-300',
+    glow: 'shadow-amber-500/25',
   },
   rose: {
-    bg: 'bg-rose-950/90 hover:bg-rose-900/90',
-    border: 'border-rose-500/50',
+    bg: 'bg-rose-950/95 hover:bg-rose-900/95',
+    border: 'border-rose-500/60',
     text: 'text-rose-200',
     time: 'text-white',
-    badge: 'bg-rose-500/20 text-rose-300',
-    glow: 'shadow-rose-500/20',
+    badge: 'bg-rose-500/30 text-rose-300',
+    glow: 'shadow-rose-500/25',
   },
   cyan: {
-    bg: 'bg-cyan-950/90 hover:bg-cyan-900/90',
-    border: 'border-cyan-500/50',
+    bg: 'bg-cyan-950/95 hover:bg-cyan-900/95',
+    border: 'border-cyan-500/60',
     text: 'text-cyan-200',
     time: 'text-white',
-    badge: 'bg-cyan-500/20 text-cyan-300',
-    glow: 'shadow-cyan-500/20',
+    badge: 'bg-cyan-500/30 text-cyan-300',
+    glow: 'shadow-cyan-500/25',
   },
   violet: {
-    bg: 'bg-purple-950/90 hover:bg-purple-900/90',
-    border: 'border-purple-500/50',
+    bg: 'bg-purple-950/95 hover:bg-purple-900/95',
+    border: 'border-purple-500/60',
     text: 'text-purple-200',
     time: 'text-white',
-    badge: 'bg-purple-500/20 text-purple-300',
-    glow: 'shadow-purple-500/20',
+    badge: 'bg-purple-500/30 text-purple-300',
+    glow: 'shadow-purple-500/25',
   },
 };
 
@@ -74,6 +76,8 @@ export const FloatingPillsLayer: React.FC<FloatingPillsLayerProps> = ({
   isStopwatchRunning,
   onTogglePlayPause,
   onLap,
+  onTriggerSystemPiP,
+  isPiPActive,
 }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -103,7 +107,7 @@ export const FloatingPillsLayer: React.FC<FloatingPillsLayerProps> = ({
     if (!draggingId) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      const newX = Math.max(10, Math.min(window.innerWidth - 220, e.clientX - dragOffsetRef.current.x));
+      const newX = Math.max(10, Math.min(window.innerWidth - 240, e.clientX - dragOffsetRef.current.x));
       const newY = Math.max(70, Math.min(window.innerHeight - 80, e.clientY - dragOffsetRef.current.y));
       onUpdatePill(draggingId, { x: newX, y: newY });
     };
@@ -111,7 +115,7 @@ export const FloatingPillsLayer: React.FC<FloatingPillsLayerProps> = ({
     const handleTouchMove = (e: TouchEvent) => {
       if (e.touches.length > 0) {
         const touch = e.touches[0];
-        const newX = Math.max(10, Math.min(window.innerWidth - 220, touch.clientX - dragOffsetRef.current.x));
+        const newX = Math.max(10, Math.min(window.innerWidth - 240, touch.clientX - dragOffsetRef.current.x));
         const newY = Math.max(70, Math.min(window.innerHeight - 80, touch.clientY - dragOffsetRef.current.y));
         onUpdatePill(draggingId, { x: newX, y: newY });
       }
@@ -170,7 +174,7 @@ export const FloatingPillsLayer: React.FC<FloatingPillsLayerProps> = ({
               transform: `translate3d(${pill.x}px, ${pill.y}px, 0)`,
               touchAction: 'none',
             }}
-            className={`absolute top-0 left-0 pointer-events-auto backdrop-blur-md rounded-2xl border shadow-xl transition-shadow ${style.bg} ${style.border} ${style.glow} select-none flex items-center p-1.5 sm:p-2 gap-2 text-xs font-sans animate-in fade-in zoom-in-95 duration-200`}
+            className={`absolute top-0 left-0 pointer-events-auto backdrop-blur-md rounded-2xl border shadow-2xl transition-shadow ${style.bg} ${style.border} ${style.glow} select-none flex items-center p-2 sm:p-2.5 gap-2 text-xs font-sans animate-in fade-in zoom-in-95 duration-200`}
           >
             {/* Drag Handle */}
             <div
@@ -184,13 +188,13 @@ export const FloatingPillsLayer: React.FC<FloatingPillsLayerProps> = ({
                 }
               }}
               className="cursor-grab active:cursor-grabbing p-1 text-slate-400 hover:text-slate-200 transition-colors flex items-center justify-center"
-              title="Arraste para reposicionar a pílula"
+              title="Arraste para reposicionar na tela"
             >
-              <GripVertical className="w-3.5 h-3.5" />
+              <GripVertical className="w-4 h-4" />
             </div>
 
             {/* Pill Information */}
-            <div className="flex flex-col pr-1">
+            <div className="flex flex-col pr-1 min-w-[90px]">
               {/* Title / Tag */}
               <div className="flex items-center gap-1.5">
                 {isEditing ? (
@@ -223,7 +227,7 @@ export const FloatingPillsLayer: React.FC<FloatingPillsLayerProps> = ({
                     className="flex items-center gap-1 cursor-pointer group"
                     title="Clique para renomear"
                   >
-                    <span className={`text-[11px] font-semibold tracking-wide uppercase px-1.5 py-0.2 rounded-md ${style.badge}`}>
+                    <span className={`text-[10px] font-bold tracking-wide uppercase px-1.5 py-0.5 rounded-md ${style.badge}`}>
                       {pill.title}
                     </span>
                     <Edit2 className="w-2.5 h-2.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -233,7 +237,7 @@ export const FloatingPillsLayer: React.FC<FloatingPillsLayerProps> = ({
                 {pill.isLive && (
                   <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-bold">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                    LIVE
+                    AO VIVO
                   </span>
                 )}
               </div>
@@ -268,6 +272,18 @@ export const FloatingPillsLayer: React.FC<FloatingPillsLayerProps> = ({
                 >
                   <Flag className="w-3.5 h-3.5" />
                 </button>
+                
+                {/* System Picture-in-Picture Trigger Button */}
+                {onTriggerSystemPiP && (
+                  <button
+                    type="button"
+                    onClick={onTriggerSystemPiP}
+                    className="p-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white transition-colors"
+                    title="Flutuar sobre outros apps no aparelho (Picture-in-Picture)"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             )}
 

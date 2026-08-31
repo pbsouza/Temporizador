@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Command, Sparkles } from 'lucide-react';
+import { X, Command, Sparkles, PictureInPicture } from 'lucide-react';
 
 interface ShortcutsModalProps {
   isOpen: boolean;
@@ -13,9 +13,10 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
     { key: 'Espaço', desc: 'Iniciar ou pausar o cronômetro' },
     { key: 'L', desc: 'Registrar volta / tempo parcial' },
     { key: 'R', desc: 'Zerar o cronômetro' },
-    { key: 'F', desc: 'Flutuar / Criar Pílula com o tempo atual' },
+    { key: 'F', desc: 'Flutuar / Criar Pílula interativa no app' },
+    { key: 'P', desc: 'Flutuar em Outros Apps (Picture-in-Picture)' },
     { key: 'M', desc: 'Ativar / Desativar efeitos sonoros' },
-    { key: 'Esc', desc: 'Fechar modais e pílulas ativas' },
+    { key: 'Esc', desc: 'Fechar modais' },
   ];
 
   return (
@@ -24,7 +25,7 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-full hover:bg-slate-800 transition-colors"
+          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-white rounded-full hover:bg-slate-800 transition-colors cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -45,9 +46,12 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
           ))}
         </div>
 
-        <div className="mt-5 p-3 rounded-xl bg-indigo-950/40 border border-indigo-500/30 flex items-center gap-2 text-xs text-indigo-300">
-          <Sparkles className="w-4 h-4 text-indigo-400 flex-shrink-0" />
-          <span>Dica: Use o botão flutuante ou pressione <strong>F</strong> a qualquer momento para criar pílulas de tempo!</span>
+        <div className="mt-5 p-3.5 rounded-2xl bg-indigo-950/60 border border-indigo-500/40 flex items-start gap-3 text-xs text-indigo-200">
+          <PictureInPicture className="w-5 h-5 text-indigo-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <strong className="text-white block mb-0.5">Pílula Flutuante sobre outros Apps</strong>
+            Use o botão <strong>"Flutuar em Outros Apps"</strong> para que uma pílula com o cronômetro em tempo real fique visível na tela mesmo ao alternar para WhatsApp, navegação ou outros apps.
+          </div>
         </div>
       </div>
     </div>

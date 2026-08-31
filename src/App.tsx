@@ -14,6 +14,7 @@ import { PwaInstallBanner } from './components/PwaInstallBanner';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { Lap, FloatingPill, AppTheme } from './types';
 import { sound } from './utils/audio';
+import { floatingPiP } from './utils/floatingPip';
 
 const PILL_COLORS: FloatingPill['color'][] = ['indigo', 'emerald', 'amber', 'rose', 'cyan', 'violet'];
 
@@ -33,6 +34,10 @@ export default function App() {
   const [pills, setPills] = useState<FloatingPill[]>([]);
   const pillCounterRef = useRef<number>(0);
 
+  // Picture-in-Picture Floating Pill on System/Other Apps State
+  const [isPiPActive, setIsPiPActive] = useState<boolean>(false);
+  const [supportsPiP, setSupportsPiP] = useState<boolean>(false);
+
   // App Settings & Preferences
   const [theme, setTheme] = useState<AppTheme>('dark');
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -44,6 +49,11 @@ export default function App() {
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
   const [isInstallable, setIsInstallable] = useState<boolean>(false);
+
+  // Check PiP support on mount
+  useEffect(() => {
+    setSupportsPiP(floatingPiP.isSupported());
+  }, []);
 
   // Update audio muted status
   useEffect(() => {
@@ -139,8 +149,8 @@ export default function App() {
     sound.playLap();
   }, [isRunning, laps.length]);
 
-  // Create Floating Pill ("Botão de Flutuar que quando acionado cria uma pílula com o tempo cronometrado")
-  const handleCreateFloatingPill = useCallback((timeToUse?: number, titleLabel?: string) => {
+  // Create Floating Pill (In-App floating pill or live pill)
+  const handleCreateFloatingPill = useCallback((timeToUse?: number, titleLabel?: string, makeLive?: boolean) => {
     const current = timeToUse !== undefined 
       ? timeToUse 
       : accumulatedTimeRef.current + (isRunning ? performance.now() - startTimeRef.current : 0);
@@ -159,9 +169,9 @@ export default function App() {
 
     const newPill: FloatingPill = {
       id: `pill-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      title: titleLabel || `Marcação #${index}`,
+      title: titleLabel || (makeLive ? 'Cronômetro Flutuante' : `Marcação #${index}`),
       timeMs: current,
-      isLive: false,
+      isLive: makeLive || false,
       createdAt: Date.now(),
       x: baseX,
       y: baseY,
@@ -172,9 +182,45 @@ export default function App() {
     sound.playPillCreate();
   }, [isRunning]);
 
+  // System-wide Picture-in-Picture Floating Pill (floats over any app on the phone/computer)
+  const handleToggleSystemPiP = useCallback(async () => {
+    if (isPiPActive) {
+      await floatingPiP.exitPiP();
+    } else {
+      // If timer is not running, start it when entering floating mode for convenience
+      if (!isRunning) {
+        handleStart();
+      }
+      await floatingPiP.enterPiP();
+    }
+  }, [isPiPActive, isRunning, handleStart]);
+
+  // Link PiP service callbacks with latest state
+  useEffect(() => {
+    floatingPiP.setCallbacks(
+      () => {
+        return accumulatedTimeRef.current + (isRunning ? performance.now() - startTimeRef.current : 0);
+      },
+      () => isRunning,
+      () => {
+        if (isRunning) {
+          handlePause();
+        } else {
+          handleStart();
+        }
+      },
+      () => {
+        handleLap();
+      },
+      (active) => {
+        setIsPiPActive(active);
+      }
+    );
+  }, [isRunning, handleStart, handlePause, handleLap]);
+
   // Add pill directly from a lap entry
   const handleAddPillFromLap = useCallback((lap: Lap) => {
-    handleCreateFloatingPill(lap.lapTime, `Volta #${lap.lapNumber}`);
+    handleCreateFloatingPill(lap.lapTime, `Volta #${lap.lapNumber}`, false);
   }, [handleCreateFloatingPill]);
 
   // Remove pill
@@ -248,7 +294,11 @@ export default function App() {
           break;
         case 'KeyF':
           e.preventDefault();
-          handleCreateFloatingPill();
+          handleCreateFloatingPill(undefined, undefined, true);
+          break;
+        case 'KeyP':
+          e.preventDefault();
+          handleToggleSystemPiP();
           break;
         case 'KeyM':
           e.preventDefault();
@@ -265,9 +315,9 @@ export default function App() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isRunning, handleStart, handlePause, handleLap, handleReset, handleCreateFloatingPill]);
+  }, [isRunning, handleStart, handlePause, handleLap, handleReset, handleCreateFloatingPill, handleToggleSystemPiP]);
 
-  // Clean up animation on unmount
+  // Clean up animation and PiP on unmount
   useEffect(() => {
     return () => {
       if (animFrameIdRef.current) {
@@ -276,6 +326,7 @@ export default function App() {
       if (wakeLockSentinelRef.current) {
         wakeLockSentinelRef.current.release().catch(() => {});
       }
+      floatingPiP.exitPiP().catch(() => {});
     };
   }, []);
 
@@ -303,11 +354,16 @@ export default function App() {
         isStopwatchRunning={isRunning}
         onTogglePlayPause={isRunning ? handlePause : handleStart}
         onLap={handleLap}
+        onTriggerSystemPiP={handleToggleSystemPiP}
+        isPiPActive={isPiPActive}
       />
 
-      {/* Persistent Floating Action Button */}
+      {/* Persistent Floating Action Buttons */}
       <FloatingActionButton
-        onClick={() => handleCreateFloatingPill()}
+        onClickPill={() => handleCreateFloatingPill(undefined, undefined, true)}
+        onClickPiP={handleToggleSystemPiP}
+        supportsPiP={supportsPiP}
+        isPiPActive={isPiPActive}
         pillCount={pills.length}
         isRunning={isRunning}
       />
@@ -346,7 +402,10 @@ export default function App() {
             onPause={handlePause}
             onReset={handleReset}
             onLap={handleLap}
-            onCreatePill={() => handleCreateFloatingPill()}
+            onCreatePill={() => handleCreateFloatingPill(undefined, undefined, true)}
+            supportsPiP={supportsPiP}
+            isPiPActive={isPiPActive}
+            onTriggerPiP={handleToggleSystemPiP}
             theme={theme}
           />
         </div>
@@ -371,13 +430,15 @@ export default function App() {
           <button
             type="button"
             onClick={() => setIsShortcutsModalOpen(true)}
-            className="hover:text-slate-300 transition-colors underline"
+            className="hover:text-slate-300 transition-colors underline cursor-pointer"
           >
-            Ver atalhos (Espaço / L / R / F)
+            Ver atalhos (Espaço / L / R / F / P)
           </button>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-[11px] text-slate-600">Pressione <strong>F</strong> para flutuar o tempo</span>
+          <span className="text-[11px] text-slate-400">
+            Use <strong>Flutuar em Outros Apps</strong> para manter o cronômetro visível sobre qualquer app
+          </span>
         </div>
       </footer>
 

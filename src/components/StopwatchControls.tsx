@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, RotateCcw, Flag, Sparkles, ExternalLink } from 'lucide-react';
+import { Play, Pause, RotateCcw, Flag, Sparkles, ExternalLink, PictureInPicture } from 'lucide-react';
 import { AppTheme } from '../types';
 
 interface StopwatchControlsProps {
@@ -12,6 +12,7 @@ interface StopwatchControlsProps {
   onCreatePill: () => void;
   theme: AppTheme;
   supportsPiP?: boolean;
+  isPiPActive?: boolean;
   onTriggerPiP?: () => void;
 }
 
@@ -25,6 +26,7 @@ export const StopwatchControls: React.FC<StopwatchControlsProps> = ({
   onCreatePill,
   theme,
   supportsPiP,
+  isPiPActive,
   onTriggerPiP,
 }) => {
   const isStarted = elapsedTime > 0;
@@ -103,31 +105,35 @@ export const StopwatchControls: React.FC<StopwatchControlsProps> = ({
         </button>
       </div>
 
-      {/* Secondary Feature Controls: Flutuar / Criar Pílula */}
+      {/* Secondary Feature Controls: Flutuar Pílula & Flutuar sobre outros apps */}
       <div className="w-full flex items-center justify-center gap-3 pt-2">
         {/* Floating Pill Generator Button */}
         <button
           id="create-floating-pill-btn"
           type="button"
           onClick={onCreatePill}
-          className="flex-1 max-w-xs flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-pink-500/20 hover:from-indigo-500/30 hover:via-purple-500/30 hover:to-pink-500/30 border border-indigo-500/40 text-indigo-200 text-xs sm:text-sm font-semibold shadow-md transition-all active:scale-95 group"
-          title="Criar uma pílula flutuante com o tempo atual (Atalho: F)"
+          className="flex-1 max-w-xs flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-pink-500/20 hover:from-indigo-500/30 hover:via-purple-500/30 hover:to-pink-500/30 border border-indigo-500/40 text-indigo-200 text-xs sm:text-sm font-semibold shadow-md transition-all active:scale-95 group cursor-pointer"
+          title="Criar uma pílula flutuante na tela (Atalho: F)"
         >
           <Sparkles className="w-4 h-4 text-indigo-400 group-hover:rotate-12 transition-transform" />
-          <span>Criar Pílula de Tempo</span>
+          <span>Flutuar Pílula (App)</span>
         </button>
 
-        {/* Picture-in-Picture Floating Mode (if browser supports) */}
+        {/* Picture-in-Picture Floating Mode over other apps */}
         {supportsPiP && onTriggerPiP && (
           <button
             id="pip-mode-btn"
             type="button"
             onClick={onTriggerPiP}
-            className="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-all"
-            title="Abrir em Janela Flutuante do Sistema (Picture-in-Picture)"
+            className={`flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border text-xs sm:text-sm font-semibold shadow-md transition-all active:scale-95 cursor-pointer ${
+              isPiPActive
+                ? 'bg-emerald-600 text-white border-emerald-400 shadow-emerald-600/30'
+                : 'bg-indigo-600/90 hover:bg-indigo-500 text-white border-indigo-400/40 shadow-indigo-600/20'
+            }`}
+            title="Minimizar e flutuar o cronômetro sobre todos os outros apps no aparelho"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Modo PiP</span>
+            <PictureInPicture className="w-4 h-4" />
+            <span>{isPiPActive ? 'Pílula Ativa no Sistema' : 'Flutuar em Outros Apps'}</span>
           </button>
         )}
       </div>
