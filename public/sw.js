@@ -1,12 +1,12 @@
 const CACHE_NAME = 'cronometro-pwa-v1';
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/favicon.png',
-  '/icon-192.png',
-  '/icon-512.png',
-  '/icon.png'
+  './',
+  './index.html',
+  './manifest.webmanifest',
+  './favicon.png',
+  './icon-192.png',
+  './icon-512.png',
+  './icon.png'
 ];
 
 self.addEventListener('install', (event) => {

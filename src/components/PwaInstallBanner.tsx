@@ -32,7 +32,7 @@ export const PwaInstallBanner: React.FC<PwaInstallBannerProps> = ({
         <div className="flex items-center gap-4 mb-4">
           <div className="w-16 h-16 rounded-2xl overflow-hidden shadow-lg border border-slate-700 bg-slate-950 flex-shrink-0">
             <img
-              src="/icon.png"
+              src="./icon.png"
               alt="Cronômetro Pro Ícone"
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover"

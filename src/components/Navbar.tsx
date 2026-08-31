@@ -33,7 +33,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="flex items-center gap-3">
         <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-lg border border-slate-700/60 flex-shrink-0 bg-slate-900">
           <img
-            src="/icon.png"
+            src="./icon.png"
             alt="Ícone do Cronômetro Pro"
             referrerPolicy="no-referrer"
             className="w-full h-full object-cover"
