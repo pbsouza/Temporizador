@@ -1,23 +1,168 @@
 import { formatTimeString } from './timeFormat';
 
 /**
- * Service to render a canvas-based video stream of the live stopwatch and trigger
- * standard Picture-in-Picture (PiP) or Document PiP.
+ * High-reliability Background & Picture-in-Picture Service for Stopwatch
  * 
- * Works natively on Android Chrome (Canvas Video PiP) and Desktop Chrome (Document PiP or Video PiP).
- * This allows the stopwatch pill to float over other apps in real-time.
+ * Key challenges solved:
+ * 1. Android / Chrome throttling when app is in background:
+ *    - `requestAnimationFrame` pauses when tab is backgrounded.
+ *    - Web Workers with `setInterval` run continuously without being throttled by the display engine.
+ *    - Continuous silent audio playback prevents OS audio/media session from going to deep sleep.
+ * 2. Canvas Video Stream updates:
+ *    - Calling `videoTrack.requestFrame()` forces the PiP video window to render the latest canvas frame
+ *      even when the main document is hidden / in background.
+ * 3. MediaSession API:
+ *    - Registers native Android / OS media notification with live playback position and actions (play, pause, next/lap).
  */
 class FloatingPiPService {
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
   private video: HTMLVideoElement | null = null;
   private isPiPActive = false;
-  private animId: number | null = null;
+  private worker: Worker | null = null;
+  private bgIntervalId: any = null;
+
   private getTimeFn: () => number = () => 0;
   private getIsRunningFn: () => boolean = () => false;
   private onToggleFn: () => void = () => {};
   private onLapFn: () => void = () => {};
   private onStateChangeCallback: ((active: boolean) => void) | null = null;
+
+  // Silent audio generator to keep process alive in background on mobile
+  private audioCtx: AudioContext | null = null;
+  private silentGain: GainNode | null = null;
+
+  constructor() {
+    this.initWorker();
+    this.initVisibilityListener();
+  }
+
+  private initWorker() {
+    if (typeof window === 'undefined') return;
+    try {
+      const blob = new Blob(
+        [
+          `
+          let timer = null;
+          self.onmessage = function(e) {
+            if (e.data === 'start') {
+              if (timer) clearInterval(timer);
+              // Tick every 33ms (approx 30fps) for PiP and background updates
+              timer = setInterval(function() {
+                self.postMessage('tick');
+              }, 33);
+            } else if (e.data === 'stop') {
+              if (timer) {
+                clearInterval(timer);
+                timer = null;
+              }
+            }
+          };
+        `
+        ],
+        { type: 'application/javascript' }
+      );
+      this.worker = new Worker(URL.createObjectURL(blob));
+      this.worker.onmessage = () => {
+        this.onWorkerTick();
+      };
+    } catch (e) {
+      console.warn('Web Worker initialization for PiP background loop failed, using interval fallback:', e);
+    }
+  }
+
+  private initVisibilityListener() {
+    if (typeof document === 'undefined') return;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        // Tab minimized or switched app
+        if (this.isPiPActive || this.getIsRunningFn()) {
+          this.startBackgroundHeartbeat();
+        }
+      } else {
+        // Tab restored
+        if (!this.isPiPActive && !this.getIsRunningFn()) {
+          this.stopBackgroundHeartbeat();
+        }
+      }
+    });
+  }
+
+  private startBackgroundHeartbeat() {
+    if (this.worker) {
+      this.worker.postMessage('start');
+    } else if (!this.bgIntervalId) {
+      this.bgIntervalId = setInterval(() => {
+        this.onWorkerTick();
+      }, 33);
+    }
+    this.ensureKeepAliveAudio();
+  }
+
+  private stopBackgroundHeartbeat() {
+    if (this.worker) {
+      this.worker.postMessage('stop');
+    }
+    if (this.bgIntervalId) {
+      clearInterval(this.bgIntervalId);
+      this.bgIntervalId = null;
+    }
+    this.stopKeepAliveAudio();
+  }
+
+  private ensureKeepAliveAudio() {
+    try {
+      if (!this.audioCtx) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          this.audioCtx = new AudioCtx();
+        }
+      }
+      if (this.audioCtx) {
+        if (this.audioCtx.state === 'suspended') {
+          this.audioCtx.resume().catch(() => {});
+        }
+        if (!this.silentGain) {
+          const osc = this.audioCtx.createOscillator();
+          this.silentGain = this.audioCtx.createGain();
+          this.silentGain.gain.value = 0.0001; // Inaudible
+          osc.connect(this.silentGain);
+          this.silentGain.connect(this.audioCtx.destination);
+          osc.start();
+        }
+      }
+    } catch (e) {
+      // Audio keep-alive ignore
+    }
+  }
+
+  private stopKeepAliveAudio() {
+    try {
+      if (this.audioCtx && this.audioCtx.state === 'running') {
+        this.audioCtx.suspend().catch(() => {});
+      }
+    } catch (e) {}
+  }
+
+  private onWorkerTick() {
+    // 1. If PiP is active, force render frame
+    if (this.isPiPActive) {
+      this.renderCanvasFrame();
+      // On browsers supporting canvas stream tracks, notify track of update
+      if (this.video && this.video.srcObject) {
+        const stream = this.video.srcObject as MediaStream;
+        const track = stream.getVideoTracks()[0] as any;
+        if (track && typeof track.requestFrame === 'function') {
+          try {
+            track.requestFrame();
+          } catch (e) {}
+        }
+      }
+    }
+
+    // 2. Update MediaSession notification metadata if available
+    this.updateMediaSession();
+  }
 
   public isSupported(): boolean {
     if (typeof document === 'undefined') return false;
@@ -61,9 +206,9 @@ class FloatingPiPService {
             height: 120,
           });
 
-          // Setup Document PiP Window
           this.setupDocumentPiP(pipWindow);
           this.isPiPActive = true;
+          this.startBackgroundHeartbeat();
           this.onStateChangeCallback?.(true);
           return true;
         } catch (docErr) {
@@ -72,7 +217,11 @@ class FloatingPiPService {
       }
 
       // 2. Video Element Canvas Stream PiP (Universal for Android Chrome & Desktop)
-      return await this.setupVideoCanvasPiP();
+      const success = await this.setupVideoCanvasPiP();
+      if (success) {
+        this.startBackgroundHeartbeat();
+      }
+      return success;
     } catch (err) {
       console.error('Error entering PiP mode:', err);
       return false;
@@ -96,13 +245,13 @@ class FloatingPiPService {
           user-select: none;
         }
         .pill {
-          background: #1e1b4b;
+          background: #111827;
           border: 2px solid #6366f1;
           border-radius: 9999px;
-          padding: 8px 16px;
+          padding: 10px 18px;
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 14px;
           box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.4);
           width: 100%;
           justify-content: space-between;
@@ -112,7 +261,7 @@ class FloatingPiPService {
           flex-direction: column;
         }
         .live-tag {
-          font-size: 10px;
+          font-size: 11px;
           font-weight: 700;
           color: #34d399;
           letter-spacing: 0.05em;
@@ -120,7 +269,7 @@ class FloatingPiPService {
         }
         .time-display {
           font-family: monospace;
-          font-size: 20px;
+          font-size: 22px;
           font-weight: 800;
           color: #ffffff;
           letter-spacing: -0.5px;
@@ -128,21 +277,21 @@ class FloatingPiPService {
         .btn-group {
           display: flex;
           align-items: center;
-          gap: 6px;
+          gap: 8px;
         }
         button {
-          background: #312e81;
+          background: #1e1b4b;
           border: 1px solid #4f46e5;
           color: #fff;
           border-radius: 9999px;
-          padding: 6px 12px;
-          font-size: 12px;
+          padding: 6px 14px;
+          font-size: 13px;
           font-weight: 600;
           cursor: pointer;
           transition: background 0.2s;
         }
-        button:hover { background: #4338ca; }
-        button.primary { background: #6366f1; }
+        button:hover { background: #312e81; }
+        button.primary { background: #6366f1; border-color: #818cf8; }
         button.primary:hover { background: #4f46e5; }
       </style>
       <div class="pill">
@@ -170,7 +319,7 @@ class FloatingPiPService {
       this.onLapFn();
     });
 
-    const updateLoop = () => {
+    const updateDocPiP = () => {
       if (!this.isPiPActive) return;
       const ms = this.getTimeFn();
       const running = this.getIsRunningFn();
@@ -180,15 +329,17 @@ class FloatingPiPService {
         statusTxt.innerText = running ? '● AO VIVO' : '❚❚ PAUSADO';
         statusTxt.style.color = running ? '#34d399' : '#f59e0b';
       }
-      requestAnimationFrame(updateLoop);
     };
 
+    // Use interval in pipWindow to guarantee updates even if parent throttles
+    const interval = pipWindow.setInterval(updateDocPiP, 33);
+
     pipWindow.addEventListener('pagehide', () => {
+      pipWindow.clearInterval(interval);
       this.isPiPActive = false;
+      this.stopBackgroundHeartbeat();
       this.onStateChangeCallback?.(false);
     });
-
-    requestAnimationFrame(updateLoop);
   }
 
   private async setupVideoCanvasPiP(): Promise<boolean> {
@@ -215,10 +366,7 @@ class FloatingPiPService {
 
       this.video.addEventListener('leavepictureinpicture', () => {
         this.isPiPActive = false;
-        if (this.animId) {
-          cancelAnimationFrame(this.animId);
-          this.animId = null;
-        }
+        this.stopBackgroundHeartbeat();
         this.onStateChangeCallback?.(false);
       });
     }
@@ -226,7 +374,7 @@ class FloatingPiPService {
     // Draw initial frame
     this.renderCanvasFrame();
 
-    // Capture Canvas stream to video
+    // Capture Canvas stream to video (30 FPS)
     const stream = (this.canvas as any).captureStream ? (this.canvas as any).captureStream(30) : null;
     if (!stream) {
       throw new Error('captureStream not supported');
@@ -240,18 +388,7 @@ class FloatingPiPService {
     this.isPiPActive = true;
     this.onStateChangeCallback?.(true);
 
-    // Start render loop
-    this.startCanvasRenderLoop();
     return true;
-  }
-
-  private startCanvasRenderLoop() {
-    const loop = () => {
-      if (!this.isPiPActive) return;
-      this.renderCanvasFrame();
-      this.animId = requestAnimationFrame(loop);
-    };
-    this.animId = requestAnimationFrame(loop);
   }
 
   private renderCanvasFrame() {
@@ -268,13 +405,13 @@ class FloatingPiPService {
     ctx.fillRect(0, 0, width, height);
 
     // Floating Pill Card
-    const pillX = 20;
-    const pillY = 20;
-    const pillW = width - 40;
-    const pillH = height - 40;
-    const radius = 35;
+    const pillX = 16;
+    const pillY = 16;
+    const pillW = width - 32;
+    const pillH = height - 32;
+    const radius = 32;
 
-    // Outer Glow / Border
+    // Outer Pill Background & Border
     ctx.save();
     ctx.beginPath();
     ctx.roundRect(pillX, pillY, pillW, pillH, radius);
@@ -285,21 +422,21 @@ class FloatingPiPService {
     ctx.stroke();
     ctx.restore();
 
-    // Status Indicator
+    // Status Indicator Dot & Text
     ctx.save();
-    const dotX = pillX + 35;
-    const dotY = pillY + 35;
+    const dotX = pillX + 32;
+    const dotY = pillY + 32;
     ctx.beginPath();
     ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
     ctx.fillStyle = isRunning ? '#10b981' : '#f59e0b';
     ctx.fill();
 
-    ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     ctx.fillStyle = isRunning ? '#34d399' : '#fbbf24';
-    ctx.fillText(isRunning ? 'CRONÔMETRO ATIVO' : 'CRONÔMETRO PAUSADO', dotX + 16, dotY + 5);
+    ctx.fillText(isRunning ? 'CRONÔMETRO ATIVO' : 'CRONÔMETRO PAUSADO', dotX + 14, dotY + 5);
     ctx.restore();
 
-    // Big Stopwatch Time Display
+    // Big Stopwatch Time Display (Crisp and legible)
     ctx.save();
     ctx.font = 'bold 56px "SF Mono", Menlo, Consolas, monospace';
     ctx.fillStyle = '#ffffff';
@@ -309,15 +446,55 @@ class FloatingPiPService {
     ctx.restore();
   }
 
+  private updateMediaSession() {
+    if ('mediaSession' in navigator) {
+      try {
+        const ms = this.getTimeFn();
+        const isRunning = this.getIsRunningFn();
+        const timeFormatted = formatTimeString(ms, true);
+
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: `⏱️ ${timeFormatted}`,
+          artist: isRunning ? 'Cronômetro em Execução' : 'Cronômetro Pausado',
+          album: 'Cronômetro Pro PWA',
+          artwork: [
+            { src: './icon-192.png', sizes: '192x192', type: 'image/png' },
+            { src: './icon-512.png', sizes: '512x512', type: 'image/png' }
+          ]
+        });
+
+        navigator.mediaSession.playbackState = isRunning ? 'playing' : 'paused';
+
+        navigator.mediaSession.setActionHandler('play', () => {
+          if (!this.getIsRunningFn()) this.onToggleFn();
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          if (this.getIsRunningFn()) this.onToggleFn();
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          this.onLapFn();
+        });
+      } catch (e) {}
+    }
+  }
+
+  public notifyTimerChange(isRunning: boolean) {
+    if (isRunning) {
+      this.startBackgroundHeartbeat();
+    } else if (!this.isPiPActive) {
+      this.stopBackgroundHeartbeat();
+    }
+    this.updateMediaSession();
+  }
+
   public async exitPiP(): Promise<void> {
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture();
       }
       this.isPiPActive = false;
-      if (this.animId) {
-        cancelAnimationFrame(this.animId);
-        this.animId = null;
+      if (!this.getIsRunningFn()) {
+        this.stopBackgroundHeartbeat();
       }
       this.onStateChangeCallback?.(false);
     } catch (err) {

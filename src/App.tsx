@@ -98,6 +98,7 @@ export default function App() {
     if (isRunning) return;
     startTimeRef.current = performance.now();
     setIsRunning(true);
+    floatingPiP.notifyTimerChange(true);
     sound.playStart();
     animFrameIdRef.current = requestAnimationFrame(updateTimer);
   }, [isRunning, updateTimer]);
@@ -113,6 +114,7 @@ export default function App() {
     accumulatedTimeRef.current += now - startTimeRef.current;
     setElapsedTime(accumulatedTimeRef.current);
     setIsRunning(false);
+    floatingPiP.notifyTimerChange(false);
     sound.playPause();
   }, [isRunning]);
 
@@ -127,6 +129,7 @@ export default function App() {
     lastLapTimestampRef.current = 0;
     setElapsedTime(0);
     setIsRunning(false);
+    floatingPiP.notifyTimerChange(false);
     setLaps([]);
     sound.playReset();
   }, []);
